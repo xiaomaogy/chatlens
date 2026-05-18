@@ -79,6 +79,39 @@ def get_init_command(force: bool = False) -> dict:
 _LAUNCHER_PATH = Path(tempfile.gettempdir()) / "chatlens-init.command"
 
 
+# macOS System Settings deeplinks the wizard's pre-flight checklist needs.
+# Funneled server-side because WKWebView (used by pywebview in bundle mode)
+# silently drops <a href="x-apple.systempreferences:..."> clicks — non-http
+# schemes aren't passed to the system handler by default. `open <url>` from
+# /usr/bin/open handles the scheme correctly.
+_SETTINGS_DEEPLINKS = {
+    "app_management":    "x-apple.systempreferences:com.apple.preference.security?Privacy_AppBundles",
+    "full_disk_access":  "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
+}
+
+
+@router.post("/open-settings")
+async def open_settings(pane: str) -> dict:
+    """Open a macOS System Settings pane. `pane` is a key into
+    _SETTINGS_DEEPLINKS — we don't accept arbitrary URLs from the frontend
+    because that'd be an open redirector handing the user's `open` to
+    anything (e.g. file:// URLs)."""
+    url = _SETTINGS_DEEPLINKS.get(pane)
+    if not url:
+        raise HTTPException(400, f"unknown settings pane: {pane}")
+    proc = await asyncio.create_subprocess_exec(
+        "open", url,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        msg = stderr.decode(errors="replace").strip() or "open exited non-zero"
+        log.warning("could not open settings pane %s: %s", pane, msg)
+        raise HTTPException(500, f"无法打开设置: {msg[:200]}")
+    return {"opened": pane}
+
+
 @router.post("/run-init")
 async def run_init(force: bool = False) -> dict:
     """Open a brand-new Terminal instance and run the init command in it.

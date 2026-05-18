@@ -1376,12 +1376,13 @@ function _setSelfAttest(key, val) {
   catch {}
 }
 
-// macOS deeplink URL schemes that drop the user directly on the right
-// privacy panel. Tested on macOS 13–15; if Apple rearranges the schemes in
-// a future version these still degrade gracefully (System Settings just
-// opens at the top level).
-const _DEEPLINK_APP_MGMT = 'x-apple.systempreferences:com.apple.preference.security?Privacy_AppBundles';
-const _DEEPLINK_FDA = 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles';
+// macOS Settings pane keys recognised by POST /api/setup/open-settings. The
+// backend maps these to x-apple.systempreferences:* URLs and runs `open` —
+// we route through the API because WKWebView in bundle mode silently drops
+// <a href="x-apple.systempreferences:..."> clicks without invoking the
+// system handler.
+const _PANE_APP_MGMT = 'app_management';
+const _PANE_FDA = 'full_disk_access';
 
 function _preflightItems(w) {
   // Live-detected items pulled from /api/health.
@@ -1406,8 +1407,8 @@ function _preflightItems(w) {
       storageKey: _SELF_ATTEST_KEY_APP_MGMT,
       label: 'Terminal 拿到 App Management 权限',
       hint: 'macOS 13+ 需要这个才能让 codesign 给微信重签 get-task-allow entitlement。没它 init 会卡在 Operation not permitted。',
-      deeplink: _DEEPLINK_APP_MGMT,
-      deeplinkLabel: '打开 App Management',
+      pane: _PANE_APP_MGMT,
+      paneLabel: '打开 App Management',
     },
     {
       id: 'fda',
@@ -1415,8 +1416,8 @@ function _preflightItems(w) {
       storageKey: _SELF_ATTEST_KEY_FDA,
       label: 'Terminal 拿到 Full Disk Access',
       hint: '让 wechat-cli 能读 ~/Library/Containers/com.tencent.xinWeChat/ 下的数据库。',
-      deeplink: _DEEPLINK_FDA,
-      deeplinkLabel: '打开 Full Disk Access',
+      pane: _PANE_FDA,
+      paneLabel: '打开 Full Disk Access',
     },
   ];
 }
@@ -1433,7 +1434,7 @@ function _renderPreflight(w) {
       : '';
     const action = it.kind === 'attest'
       ? `<div class="flex items-center gap-2 mt-2">
-           <a href="${it.deeplink}" class="px-3 py-1 text-xs border border-line rounded-lg hover:bg-slate-50 inline-flex items-center gap-1">⚙️ ${escapeHtml(it.deeplinkLabel)}</a>
+           <button type="button" data-open-pane="${it.pane}" class="openPaneBtn px-3 py-1 text-xs border border-line rounded-lg hover:bg-slate-50 inline-flex items-center gap-1">⚙️ ${escapeHtml(it.paneLabel)}</button>
            <label class="flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer">
              <input type="checkbox" class="preflightChk" data-key="${it.storageKey}" ${isOk ? 'checked' : ''}>
              <span>已加入并打开开关</span>
@@ -1583,6 +1584,22 @@ function _wireWizardActions(state, cmd) {
       // Re-render the wizard with the current cached status. Avoid hitting
       // /api/health again — the auto-detected fields haven't changed.
       loadStatus(false).then(s => renderSetupWizard(s));
+    });
+  });
+
+  // Settings deeplink buttons. Route through the backend because WKWebView
+  // (bundle mode) silently drops `<a href="x-apple.systempreferences:...">`
+  // clicks. Backend runs `open <url>` which knows the scheme.
+  document.querySelectorAll('.openPaneBtn').forEach(el => {
+    el.addEventListener('click', async () => {
+      const pane = el.dataset.openPane;
+      try {
+        await api(`/api/setup/open-settings?pane=${encodeURIComponent(pane)}`,
+                  { method: 'POST', body: '{}' });
+        setNote('已唤起 System Settings —— 在那边把 Terminal 加进去后回来勾选。');
+      } catch (err) {
+        setNote(`无法打开设置：${err.message}。手动去 System Settings → Privacy & Security 找对应面板。`);
+      }
     });
   });
 
