@@ -1295,16 +1295,16 @@ function _wizardBodyFor(state, w, cmd) {
     case 'needs_app':
       return _renderNeedsApp();
     case 'keys_empty':
-      return _renderKeysEmpty(cmd);
+      return _renderKeysEmpty(cmd, w);
     case 'keys_stale':
-      return _renderKeysStale(cmd);
+      return _renderKeysStale(cmd, w);
     case 'db_locked':
       return _renderDbLocked(w);
     case 'sessions_failed':
       return _renderGenericFailure(w);
     case 'needs_init':
     default:
-      return _renderFirstTime(cmd);
+      return _renderFirstTime(cmd, w);
   }
 }
 
@@ -1328,27 +1328,143 @@ function _initCmdCard(cmd) {
     </div>`;
 }
 
-function _initButtons({primary='在 Terminal 中运行 init', showDone=true}={}) {
+/* ----- Pre-flight checklist for first-init ------------------------------
+ * Gates the "Run init" button behind four conditions. Two are auto-detected
+ * (WeChat process running, WeChat has a SQLCipher DB open via lsof); two are
+ * self-attested with macOS Settings deeplinks (App Management for Terminal,
+ * Full Disk Access for Terminal). The self-attest checkboxes persist in
+ * localStorage so re-renders during the 3s poll don't wipe them.
+ *
+ * Why these four: without all of them, sudo wechat-cli init either
+ *   (a) hits codesign Operation-not-permitted (App Management missing),
+ *   (b) can read keys but later can't read WeChat's DBs (FDA missing),
+ *   (c) extracts zero keys silently (WeChat not loaded enough — DB not
+ *       loaded means user hasn't clicked into any chat yet).
+ * Catching all four up front means init succeeds on first try.
+ */
+
+const _SELF_ATTEST_KEY_APP_MGMT = 'chatlens_preflight_app_mgmt';
+const _SELF_ATTEST_KEY_FDA = 'chatlens_preflight_fda';
+
+function _getSelfAttest(key) {
+  try { return localStorage.getItem(key) === '1'; }
+  catch { return false; }
+}
+function _setSelfAttest(key, val) {
+  try { localStorage.setItem(key, val ? '1' : '0'); }
+  catch {}
+}
+
+// macOS deeplink URL schemes that drop the user directly on the right
+// privacy panel. Tested on macOS 13–15; if Apple rearranges the schemes in
+// a future version these still degrade gracefully (System Settings just
+// opens at the top level).
+const _DEEPLINK_APP_MGMT = 'x-apple.systempreferences:com.apple.preference.security?Privacy_AppBundles';
+const _DEEPLINK_FDA = 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles';
+
+function _preflightItems(w) {
+  // Live-detected items pulled from /api/health.
+  return [
+    {
+      id: 'wechat_running',
+      kind: 'auto',
+      label: '微信正在运行',
+      ok: w.app_running === true,
+      hint: '打开 WeChat / Weixin 桌面应用。',
+    },
+    {
+      id: 'wechat_db_loaded',
+      kind: 'auto',
+      label: '微信里点过一条聊天（让密钥进内存）',
+      ok: w.db_loaded === true,
+      hint: '在微信里随便点一个聊天 —— 它会解密那个对话的数据库，密钥才会真正 load 到内存里。',
+    },
+    {
+      id: 'app_mgmt',
+      kind: 'attest',
+      storageKey: _SELF_ATTEST_KEY_APP_MGMT,
+      label: 'Terminal 拿到 App Management 权限',
+      hint: 'macOS 13+ 需要这个才能让 codesign 给微信重签 get-task-allow entitlement。没它 init 会卡在 Operation not permitted。',
+      deeplink: _DEEPLINK_APP_MGMT,
+      deeplinkLabel: '打开 App Management',
+    },
+    {
+      id: 'fda',
+      kind: 'attest',
+      storageKey: _SELF_ATTEST_KEY_FDA,
+      label: 'Terminal 拿到 Full Disk Access',
+      hint: '让 wechat-cli 能读 ~/Library/Containers/com.tencent.xinWeChat/ 下的数据库。',
+      deeplink: _DEEPLINK_FDA,
+      deeplinkLabel: '打开 Full Disk Access',
+    },
+  ];
+}
+
+function _renderPreflight(w) {
+  const items = _preflightItems(w);
+  const rows = items.map(it => {
+    const isOk = it.kind === 'auto' ? it.ok : _getSelfAttest(it.storageKey);
+    const dot = isOk
+      ? '<span class="w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center text-xs flex-shrink-0">✓</span>'
+      : '<span class="w-5 h-5 rounded-full border-2 border-slate-300 flex-shrink-0"></span>';
+    const auto = it.kind === 'auto'
+      ? '<span class="text-[10px] uppercase tracking-wider text-slate-400 ml-2">自动检测</span>'
+      : '';
+    const action = it.kind === 'attest'
+      ? `<div class="flex items-center gap-2 mt-2">
+           <a href="${it.deeplink}" class="px-3 py-1 text-xs border border-line rounded-lg hover:bg-slate-50 inline-flex items-center gap-1">⚙️ ${escapeHtml(it.deeplinkLabel)}</a>
+           <label class="flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer">
+             <input type="checkbox" class="preflightChk" data-key="${it.storageKey}" ${isOk ? 'checked' : ''}>
+             <span>已加入并打开开关</span>
+           </label>
+         </div>`
+      : '';
+    return `
+      <div class="flex items-start gap-3 py-2.5 ${isOk ? 'opacity-70' : ''}">
+        ${dot}
+        <div class="flex-1 min-w-0">
+          <div class="text-sm font-medium text-slate-800">${escapeHtml(it.label)}${auto}</div>
+          <div class="text-xs text-slate-500 mt-0.5">${it.hint}</div>
+          ${action}
+        </div>
+      </div>`;
+  }).join('');
   return `
-    <div class="flex items-center gap-2 flex-wrap">
-      <button id="runInitBtn" class="px-4 py-2 text-sm bg-accent text-white rounded-lg hover:bg-accent2 flex items-center gap-1.5">${icon('sparkle')}<span>${escapeHtml(primary)}</span></button>
-      <button id="copyInitBtn" class="px-3 py-2 text-sm border border-line rounded-lg hover:bg-slate-50">复制命令</button>
-      <div class="ml-auto"></div>
-      ${showDone ? '<button id="doneInitBtn" class="px-3 py-2 text-sm border border-line rounded-lg hover:bg-slate-50">我已完成 →</button>' : ''}
+    <div class="bg-slate-50 border border-line rounded-lg p-4 mb-4">
+      <div class="text-[11px] uppercase tracking-wider text-slate-500 mb-2 font-semibold">跑 init 前请完成这 4 项</div>
+      ${rows}
     </div>`;
 }
 
-function _renderFirstTime(cmd) {
+function _preflightAllOk(w) {
+  return _preflightItems(w).every(it =>
+    it.kind === 'auto' ? it.ok : _getSelfAttest(it.storageKey)
+  );
+}
+
+function _initButtons({primary='在 Terminal 中运行 init', showDone=true, w=null}={}) {
+  const ready = w ? _preflightAllOk(w) : true;
+  const disabledAttrs = ready ? '' : 'disabled aria-disabled="true"';
+  const disabledClass = ready
+    ? 'bg-accent text-white hover:bg-accent2'
+    : 'bg-slate-200 text-slate-400 cursor-not-allowed';
   return `
-    ${_wizardHeader('欢迎使用 ChatLens', '第一次启动需要从微信本地数据库提取一次密钥(只需要做一次)。')}
-    <ol class="list-decimal pl-5 text-sm text-slate-700 space-y-2 mb-5">
-      <li>确保 <strong>微信桌面端</strong>已经登录,并且<strong>能看到聊天列表</strong>(说明密钥已经 load 进内存)。</li>
-      <li>点下方按钮,ChatLens 会自动打开 Terminal 并贴好 <code>init</code> 命令。</li>
-      <li>在 Terminal 里按回车 → 输入 Mac 登录密码 → 等到看到 <code>密钥提取完成</code>。</li>
-      <li>第一次跑可能会提示「task_for_pid 失败,正在重新签名 WeChat」—— 这是正常的 macOS 安全策略。按提示<strong>退出微信 → 重新打开 → 等到聊天列表出来 → 再点一次本按钮</strong>即可。</li>
-    </ol>
+    <div class="flex items-center gap-2 flex-wrap">
+      <button id="runInitBtn" ${disabledAttrs} class="px-4 py-2 text-sm rounded-lg flex items-center gap-1.5 ${disabledClass}">${icon('sparkle')}<span>${escapeHtml(primary)}</span></button>
+      <button id="copyInitBtn" class="px-3 py-2 text-sm border border-line rounded-lg hover:bg-slate-50">复制命令</button>
+      <div class="ml-auto"></div>
+      ${showDone ? '<button id="doneInitBtn" class="px-3 py-2 text-sm border border-line rounded-lg hover:bg-slate-50">我已完成 →</button>' : ''}
+    </div>
+    ${ready ? '' : '<div class="mt-2 text-xs text-slate-500">完成上面 4 项后这个按钮就会激活。</div>'}`;
+}
+
+function _renderFirstTime(cmd, w) {
+  return `
+    ${_wizardHeader('欢迎使用 ChatLens', '第一次启动需要从微信本地数据库提取一次密钥（只需要做一次）。')}
+    ${_renderPreflight(w)}
+    <div class="text-xs text-slate-500 mb-3">点 Run init 后 ChatLens 会启<strong>新 Terminal 实例</strong>跑 <code>sudo wechat-cli init</code>。如果第一次提示「task_for_pid 失败正在重签微信」是正常的 —— 按它的指示 ⌘Q 微信、重开、登录、再回 Terminal 按上箭头 Enter 重跑一次 init 就行。</div>
     ${_initCmdCard(cmd)}
-    ${_initButtons()}`;
+    ${_initButtons({w})}`;
 }
 
 function _renderNeedsApp() {
@@ -1362,35 +1478,22 @@ function _renderNeedsApp() {
     <div class="text-xs text-slate-500">未检测到 WeChat 进程 · 每 3 秒自动重新检测</div>`;
 }
 
-function _renderKeysEmpty(cmd) {
+function _renderKeysEmpty(cmd, w) {
   return `
-    ${_wizardHeader('上次 init 没有真的提取到密钥', '<code>~/.wechat-cli/all_keys.json</code> 是空的 —— 几乎一定是 WeChat 当时还没完全登录。', 'warn')}
-    <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-5 text-sm text-amber-900">
-      <div class="font-semibold mb-1">下次 init 之前一定要确认:</div>
-      <ol class="list-decimal pl-5 space-y-1 text-[13px]">
-        <li><strong>完全退出 WeChat</strong>(⌘Q,不是最小化)</li>
-        <li>重新打开 WeChat,登录</li>
-        <li><strong>等到能在 WeChat 里看到聊天列表、能滚动</strong> —— 这一步最关键</li>
-        <li>然后再点下方按钮,密钥就能真的提取到了</li>
-      </ol>
-    </div>
+    ${_wizardHeader('上次 init 没有真的提取到密钥', '<code>~/.wechat-cli/all_keys.json</code> 是空的 —— 几乎一定是 WeChat 当时还没完全登录、聊天列表还没滚出来。', 'warn')}
+    ${_renderPreflight(w)}
+    <div class="text-xs text-slate-500 mb-3">这次重跑前确认上面 4 项全过 —— 尤其是 <strong>"点过一条聊天"</strong> 这一项必须显示绿勾。</div>
     ${_initCmdCard(cmd)}
-    ${_initButtons({primary: '重新运行 init'})}`;
+    ${_initButtons({primary: '重新运行 init', w})}`;
 }
 
-function _renderKeysStale(cmd) {
+function _renderKeysStale(cmd, w) {
   return `
-    ${_wizardHeader('密钥失效,可能是 WeChat 更新过', 'wechat-cli 能读到密钥文件,但用这些密钥已经解不开 WeChat 的数据库 —— 通常是 WeChat 自动更新后换了加密方案。', 'error')}
-    <div class="bg-rose-50 border border-rose-200 rounded-lg p-3 mb-5 text-sm text-rose-900">
-      <div class="font-semibold mb-1">解决办法:重新提取一次密钥</div>
-      <ol class="list-decimal pl-5 space-y-1 text-[13px]">
-        <li>完全退出 WeChat → 重新打开 → 登录 → 等聊天列表出来</li>
-        <li>点下方「重新运行 init」按钮</li>
-        <li>如果 init 提示「需要重新签名 WeChat」,按它的指示再退出重开一次微信即可</li>
-      </ol>
-    </div>
+    ${_wizardHeader('密钥失效，可能是 WeChat 更新过', '<code>wechat-cli</code> 能读到密钥文件，但用这些密钥已经解不开 WeChat 的数据库 —— 通常是 WeChat 自动更新后换了加密方案。', 'error')}
+    ${_renderPreflight(w)}
+    <div class="text-xs text-slate-500 mb-3">重新提取一次密钥即可。上面 4 项过完后按下面按钮。</div>
     ${_initCmdCard(cmd)}
-    ${_initButtons({primary: '重新运行 init'})}`;
+    ${_initButtons({primary: '重新运行 init', w})}`;
 }
 
 function _renderDbLocked(w) {
@@ -1428,13 +1531,26 @@ function _wireWizardActions(state, cmd) {
   const note = document.getElementById('setupNote');
   const setNote = (s) => { if (note) note.textContent = s; };
 
-  document.getElementById('runInitBtn')?.addEventListener('click', async () => {
-    setNote('正在打开 Terminal…');
+  // Pre-flight self-attest checkboxes (App Mgmt, FDA). When the user toggles
+  // one, persist + re-render so the Run init button can flip enabled/disabled
+  // without waiting for the next 3s poll.
+  document.querySelectorAll('.preflightChk').forEach(el => {
+    el.addEventListener('change', () => {
+      _setSelfAttest(el.dataset.key, el.checked);
+      // Re-render the wizard with the current cached status. Avoid hitting
+      // /api/health again — the auto-detected fields haven't changed.
+      loadStatus(false).then(s => renderSetupWizard(s));
+    });
+  });
+
+  document.getElementById('runInitBtn')?.addEventListener('click', async (e) => {
+    if (e.currentTarget.disabled) return;
+    setNote('正在打开新 Terminal 实例…');
     try {
       await api('/api/setup/run-init', { method:'POST', body:'{}' });
-      setNote('Terminal 已打开。按提示输入密码后,本页会自动检测密钥是否成功提取。');
-    } catch (e) {
-      setNote(`打开失败:${e.message}。请手动复制上方命令到 Terminal 运行。`);
+      setNote('新 Terminal 已打开。输 sudo 密码后,本页每 3 秒自动检测密钥是否成功提取。');
+    } catch (err) {
+      setNote(`打开失败：${err.message}。请手动复制上方命令到 Terminal 运行。`);
     }
   });
 

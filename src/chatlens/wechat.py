@@ -309,6 +309,50 @@ async def is_app_running() -> bool:
     return False
 
 
+async def is_db_loaded() -> bool:
+    """Heuristic for 'user has clicked into a chat, so SQLCipher keys are
+    actually in WeChat's process memory'.
+
+    WeChat decrypts a chat's DB lazily — the DB file is only opened (and the
+    key derived into memory) when the user opens that chat. So if WeChat has
+    any `.db` file descriptors open, the user must have loaded at least one
+    chat, and `wechat-cli init` will see real keys instead of writing an empty
+    all_keys.json. lsof works without sudo for same-user processes.
+
+    Used as a pre-flight gate in the setup wizard: without this, users who
+    just-opened-WeChat-but-haven't-clicked-anything hit the silent
+    'init succeeded but keys are empty' failure mode.
+    """
+    for name in _WECHAT_PROCESS_NAMES:
+        try:
+            pgrep = await asyncio.create_subprocess_exec(
+                "pgrep", "-x", name,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+                env=child_env(),
+            )
+            stdout, _ = await pgrep.communicate()
+            pids = [p for p in stdout.decode().split() if p.isdigit()]
+            if not pids:
+                continue
+            # lsof -p PID lists open file descriptors. Any `.db` row → user
+            # has opened at least one decrypted DB. Capping with `head` keeps
+            # us from buffering a large process's full fd list.
+            for pid in pids:
+                lsof = await asyncio.create_subprocess_shell(
+                    f"lsof -p {int(pid)} 2>/dev/null | grep -E '\\.db$' | head -1",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                    env=child_env(),
+                )
+                stdout, _ = await lsof.communicate()
+                if stdout.strip():
+                    return True
+        except FileNotFoundError:
+            return False
+    return False
+
+
 def _wechat_cli_initialized() -> bool:
     """True iff wechat-cli has been initialised AND `all_keys.json` actually
     contains at least one key.
@@ -359,6 +403,10 @@ async def status() -> dict[str, Any]:
     """
     ok, ver = await is_available()
     app_running = await is_app_running()
+    # Only probe lsof if WeChat is actually running — lsof on a missing PID
+    # is wasted work, and the wizard doesn't need db_loaded when app_running
+    # itself is False (the checklist's earlier gate already blocks).
+    db_loaded = await is_db_loaded() if app_running else False
     state_dir = Path.home() / ".wechat-cli"
     has_config = (state_dir / "config.json").exists()
     has_keys_file = (state_dir / "all_keys.json").exists()
@@ -370,6 +418,10 @@ async def status() -> dict[str, Any]:
             "needs_init": False, "version": ver if ok else "",
             "error": None, "last_message_at": None,
             "setup_state": setup_state,
+            # db_loaded: heuristic for "user has clicked into at least one
+            # chat" — gates the wizard's Run init button so it can't fire
+            # while WeChat is at the login screen / hasn't decrypted anything.
+            "db_loaded": db_loaded,
         }
         base.update(kw)
         return base
