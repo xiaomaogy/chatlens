@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/setup", tags=["setup"])
 
 
-def _init_command() -> str:
+def _init_command(force: bool = False) -> str:
     """The shell command the user (or osascript) should run to initialise
     wechat-cli. Uses the bundled python in frozen builds; falls back to the
     PATH-resolved `wechat-cli` script in source mode.
@@ -46,6 +46,11 @@ def _init_command() -> str:
     (it falls back to the build-machine's compile-time prefix, which doesn't
     exist on the user's machine). Forward every bundle-essential var that the
     in-process subprocess env carries.
+
+    force=True appends `--force` to make wechat-cli re-extract keys even when
+    `~/.wechat-cli/all_keys.json` already exists. Used by the keys_partial
+    recovery flow when the user wants to backfill missing DB keys after
+    clicking into more chats.
     """
     parts = wechat.wechat_cli_invocation()
     env = wechat.wechat_cli_env()
@@ -55,16 +60,17 @@ def _init_command() -> str:
         for var in ("PYTHONHOME", "PYTHONPATH")
         if env.get(var)
     ]
+    init_args = "init --force" if force else "init"
     if env_pairs:
-        return f"sudo env {' '.join(env_pairs)} {quoted_cmd} init"
-    return f"sudo {quoted_cmd} init"
+        return f"sudo env {' '.join(env_pairs)} {quoted_cmd} {init_args}"
+    return f"sudo {quoted_cmd} {init_args}"
 
 
 @router.get("/init-command")
-def get_init_command() -> dict:
+def get_init_command(force: bool = False) -> dict:
     """Surface the exact init command so the wizard can show it for
     copy-paste in addition to the one-click Terminal launcher."""
-    return {"command": _init_command()}
+    return {"command": _init_command(force=force)}
 
 
 # Path to the .command launcher script. Placed in $TMPDIR so it gets cleaned
@@ -74,7 +80,7 @@ _LAUNCHER_PATH = Path(tempfile.gettempdir()) / "chatlens-init.command"
 
 
 @router.post("/run-init")
-async def run_init() -> dict:
+async def run_init(force: bool = False) -> dict:
     """Open a brand-new Terminal instance and run the init command in it.
 
     The launcher script writes a tiny `.command` file then `open -n -a
@@ -91,7 +97,7 @@ async def run_init() -> dict:
     Returns the command we wrote into the script so the UI can display it
     (and the user can re-paste it manually if Terminal didn't open).
     """
-    cmd = _init_command()
+    cmd = _init_command(force=force)
     # Body of the .command file. `clear` keeps the new window tidy. Banner
     # makes it obvious to the user which Terminal window is ours.
     body = (

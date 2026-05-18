@@ -287,6 +287,8 @@ export function shell(active, body, status) {
         </div>
         <div class="px-3 py-3 border-b border-white/5 text-xs leading-5 space-y-1">
           ${_pill(status?.wechat)}
+          ${status?.wechat?.severity === 'ok' ? `
+          <a href="#setup" class="block pl-4 text-[11px] text-slate-500 hover:text-slate-300">🔧 重新提取密钥</a>` : ''}
           ${_pill(status?.claude)}
         </div>
         <div class="px-3 py-3 border-b border-white/5">

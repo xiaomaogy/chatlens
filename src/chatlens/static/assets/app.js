@@ -1205,7 +1205,23 @@ const ROUTES = {
   topic:     (rest) => pageTopic(rest),
   digests:   () => pageDigests(),
   summaries: () => pageSummaries(),
+  // #setup: manual re-entry into the wizard even when setup_state is `ready`.
+  // Used by the sidebar's "重新提取密钥" link when the user noticed a group
+  // failing to load (missing key) and wants to backfill.
+  setup:     () => pageSetup(),
 };
+
+// Force-enter the wizard with a synthetic `keys_partial` state. status() never
+// returns this state on its own — it's a manual recovery flow. The wizard's
+// keys_partial render emphasises "click into more chats first" and ships a
+// --force flag to the init invocation (otherwise wechat-cli skips because
+// all_keys.json already exists).
+async function pageSetup() {
+  const status = await loadStatus(true);
+  status.setup_state = 'keys_partial';
+  status.wechat_raw = { ...(status.wechat_raw || {}), setup_state: 'keys_partial' };
+  return renderSetupWizard(status);
+}
 
 async function render() {
   const hash = location.hash.slice(1) || 'dashboard';
@@ -1266,9 +1282,12 @@ async function renderSetupWizard(status) {
   _stopWizardPoll();
   const w = status.wechat_raw || {};
   const state = status.setup_state || w.setup_state || 'needs_init';
+  // keys_partial means "all_keys.json exists but missing some entries" —
+  // re-init must use --force to overwrite, otherwise wechat-cli no-ops.
+  const force = state === 'keys_partial';
   let cmd = '';
   try {
-    const r = await api('/api/setup/init-command');
+    const r = await api(`/api/setup/init-command${force ? '?force=true' : ''}`);
     cmd = r.command || '';
   } catch (e) {
     cmd = '（无法获取命令 —— 请确认 ChatLens 后台已启动）';
@@ -1298,6 +1317,8 @@ function _wizardBodyFor(state, w, cmd) {
       return _renderKeysEmpty(cmd, w);
     case 'keys_stale':
       return _renderKeysStale(cmd, w);
+    case 'keys_partial':
+      return _renderKeysPartial(cmd, w);
     case 'db_locked':
       return _renderDbLocked(w);
     case 'sessions_failed':
@@ -1496,6 +1517,28 @@ function _renderKeysStale(cmd, w) {
     ${_initButtons({primary: '重新运行 init', w})}`;
 }
 
+// keys_partial = manual recovery entered via `#setup`. Triggered when the user
+// noticed a specific group failing to load (key for that DB's shard wasn't in
+// WeChat's memory at last init). Fix: open the failing chat + a few others in
+// WeChat so WeChat decrypts more shards, then re-init with --force.
+function _renderKeysPartial(cmd, w) {
+  return `
+    ${_wizardHeader('补一次缺失的密钥', '<code>~/.wechat-cli/all_keys.json</code> 里有 key 了，但可能少了某个聊天分片的 key —— 通常表现为「某个群读不出来」。在微信里多点几个聊天让 WeChat 解密更多分片，然后再跑一次 init。', 'warn')}
+    <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4 text-sm text-amber-900">
+      <div class="font-semibold mb-1">这次重跑的关键：</div>
+      <ol class="list-decimal pl-5 space-y-1 text-[13px]">
+        <li>在微信里点开 <strong>那个读不出来的群</strong>（如果还能定位到）</li>
+        <li>额外点几个 <strong>不常用的群 / 旧聊天</strong> —— 越分散越好，覆盖更多 DB 分片</li>
+        <li>每个聊天滚一下让消息真的 load 出来</li>
+        <li>然后按下面按钮 —— 会用 <code>--force</code> 重新跑 init</li>
+      </ol>
+    </div>
+    ${_renderPreflight(w)}
+    <div class="text-xs text-slate-500 mb-3">上面 4 项过完后按下面按钮。Run init 会带 <code>--force</code> flag 覆盖现有 all_keys.json。</div>
+    ${_initCmdCard(cmd)}
+    ${_initButtons({primary: '重新跑 init (--force)', w})}`;
+}
+
 function _renderDbLocked(w) {
   return `
     ${_wizardHeader('数据库被 WeChat 锁住了', 'wechat-cli 能读到密钥但拿不到数据库 —— 通常是 WeChat 正在写入(同步消息中)。', 'warn')}
@@ -1547,7 +1590,10 @@ function _wireWizardActions(state, cmd) {
     if (e.currentTarget.disabled) return;
     setNote('正在打开新 Terminal 实例…');
     try {
-      await api('/api/setup/run-init', { method:'POST', body:'{}' });
+      // keys_partial → force=true so wechat-cli re-extracts even though
+      // all_keys.json already exists. Other states leave force off (default).
+      const qs = state === 'keys_partial' ? '?force=true' : '';
+      await api(`/api/setup/run-init${qs}`, { method:'POST', body:'{}' });
       setNote('新 Terminal 已打开。输 sudo 密码后,本页每 3 秒自动检测密钥是否成功提取。');
     } catch (err) {
       setNote(`打开失败：${err.message}。请手动复制上方命令到 Terminal 运行。`);
@@ -1566,7 +1612,13 @@ function _wireWizardActions(state, cmd) {
   document.getElementById('doneInitBtn')?.addEventListener('click', () => {
     setNote('正在验证密钥是否可用…');
     invalidateStatus();
-    render();
+    // keys_partial entered via #setup — done means "go back to dashboard"
+    // rather than re-rendering the wizard from the same hash route.
+    if (state === 'keys_partial') {
+      location.hash = '#dashboard';
+    } else {
+      render();
+    }
   });
 
   document.getElementById('recheckBtn')?.addEventListener('click', () => {
