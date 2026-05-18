@@ -42,6 +42,33 @@ mkdir -p "${STAGE_DIR}"
 cp -R "${APP_PATH}" "${STAGE_DIR}/"
 ln -s /Applications "${STAGE_DIR}/Applications"
 
+# Drop a Chinese-named README into the .dmg so Finder shows it at the top.
+# Two-step install guidance: drag to /Applications, then right-click → Open
+# on first launch (unsigned build means Gatekeeper otherwise blocks double-
+# click with a confusing "cannot verify developer" dialog).
+cat > "${STAGE_DIR}/先看这个 — 安装说明.txt" <<'TXT'
+ChatLens — 第一次安装请按两步
+
+【1】先拖到「应用程序 / Applications」
+    把左边的 ChatLens 拖到右边的 Applications 文件夹再启动。
+    千万别直接在这个 .dmg 窗口里双击 —— 等你弹出 .dmg，
+    ChatLens 就消失了。
+
+【2】第一次打开请「右键 → 打开」
+    ChatLens 没有买 Apple 开发者签名，直接双击会被 macOS
+    Gatekeeper 拦下来（弹一个「无法验证开发者」对话框）。
+    解法：
+      a. 进「应用程序」文件夹
+      b. 在 ChatLens 上点右键 → 选「打开」
+      c. 弹出确认框时点「打开」
+    做一次就够，之后双击正常。
+
+    懂命令行也可以跑：
+      xattr -dr com.apple.quarantine /Applications/ChatLens.app
+
+打开后会弹一个引导向导，带你完成 wechat-cli 初始化。
+TXT
+
 echo "==> Building ${DMG_PATH}"
 rm -f "${DMG_PATH}"
 hdiutil create \
