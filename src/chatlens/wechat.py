@@ -372,7 +372,7 @@ def _wechat_cli_initialized() -> bool:
     if not keys.exists() or keys.stat().st_size < 10:
         return False
     try:
-        data = json.loads(keys.read_text())
+        data = json.loads(keys.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
     if isinstance(data, (dict, list)):

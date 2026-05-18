@@ -109,7 +109,10 @@ def save_to_disk(job: Job) -> None:
     path = _jobs_dir() / f"{job.id}.json"
     tmp = path.with_name(path.name + ".tmp")
     try:
-        tmp.write_text(json.dumps(job.to_dict(), ensure_ascii=False, indent=2))
+        # Explicit utf-8 because job data routinely contains Chinese and
+        # py2app launches inherit no $LANG → Python's default encoding falls
+        # back to ASCII and write_text dies on the first non-ASCII char.
+        tmp.write_text(json.dumps(job.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(path)
     except (OSError, TypeError, ValueError) as e:
         log.warning("could not persist job %s: %s", job.id, e)
@@ -132,7 +135,7 @@ def recent_from_disk(limit: int = 20) -> list[dict]:
     out: list[dict] = []
     for p in paths:
         try:
-            out.append(json.loads(p.read_text()))
+            out.append(json.loads(p.read_text(encoding="utf-8")))
         except (OSError, json.JSONDecodeError) as e:
             log.warning("could not read persisted job %s: %s", p.name, e)
     return out

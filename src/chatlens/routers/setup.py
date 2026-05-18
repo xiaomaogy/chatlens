@@ -121,7 +121,12 @@ async def run_init(force: bool = False) -> dict:
         "read\n"
     )
     try:
-        _LAUNCHER_PATH.write_text(body)
+        # Explicit UTF-8 because the .command body contains em dashes / ✓ /
+        # ✗ / Chinese. Python's default encoding falls back to ASCII when
+        # $LANG isn't set, and py2app apps launched from Finder inherit no
+        # locale — so write_text() without encoding= dies with a
+        # UnicodeEncodeError on the first em dash in bundle mode.
+        _LAUNCHER_PATH.write_text(body, encoding="utf-8")
         _LAUNCHER_PATH.chmod(0o755)
     except OSError as e:
         log.warning("could not stage launcher script %s: %s", _LAUNCHER_PATH, e)
