@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "chatlens"
+version = "0.1.12"
+description = "Local-only WeChat group dashboard with one-click LLM summaries via Claude Code"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "sqlmodel>=0.0.22",
+    # wechat-cli is bundled into the .app via py2app so users don't need to
+    # `pipx install` it separately. Pin to the patched fork that exposes
+    # is_folded / __main__.py for module invocation.
+    "wechat-cli @ git+https://github.com/xiaomaogy/wechat-cli@main",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+]
+desktop = [
+    "pywebview>=5.3",
+]
+build = [
+    "pywebview>=5.3",
+    "py2app>=0.28",
+    # py2app 0.28 still relies on setuptools' legacy install_requires kwarg,
+    # which setuptools 80+ removed. Pin until py2app catches up.
+    "setuptools<80",
+]
+
+[project.scripts]
+chatlens = "chatlens.main:run"
+
+[tool.hatch.metadata]
+# We pin wechat-cli to a GitHub fork via a direct URL spec; hatchling refuses
+# direct references by default for PyPI hygiene, so we opt in.
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/chatlens"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

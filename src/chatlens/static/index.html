@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ChatLens — WeChat 群聊智能看板</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          ink:'#0F172A', ink2:'#1E293B', line:'#E5E7EB',
+          accent:'#4F46E5', accent2:'#6366F1', accentSoft:'#EEF2FF',
+        },
+        fontFamily: { sans: ['-apple-system','BlinkMacSystemFont','"PingFang SC"','"Hiragino Sans GB"','"Microsoft YaHei"','sans-serif'] },
+      },
+    },
+  };
+</script>
+<style>
+  .prose-zh h1 { font-size: 1.5rem; font-weight:700; margin: 1.25rem 0 .5rem; }
+  .prose-zh h2 { font-size: 1.15rem; font-weight:700; margin: 1.25rem 0 .5rem; color:#0F172A; }
+  .prose-zh h3 { font-size: 1rem; font-weight:600; margin: 1rem 0 .25rem; }
+  .prose-zh p  { margin: .5rem 0; line-height: 1.7; color:#374151; }
+  .prose-zh ul { list-style: disc; margin: .5rem 0 .5rem 1.25rem; color:#374151; }
+  .prose-zh ol { list-style: decimal; margin: .5rem 0 .5rem 1.25rem; color:#374151; }
+  .prose-zh blockquote { border-left: 3px solid #C7D2FE; padding: .25rem .75rem; color:#4338CA; background:#EEF2FF; border-radius: 6px; margin:.75rem 0; }
+  .prose-zh code { background:#F1F5F9; padding: 2px 6px; border-radius: 4px; font-size: .9em; }
+</style>
+</head>
+<body class="bg-slate-50 text-ink font-sans">
+<div id="app" class="min-h-screen"></div>
+<script type="module" src="/assets/app.js"></script>
+</body>
+</html>
