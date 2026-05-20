@@ -916,6 +916,7 @@ async function pageAsset(id) {
   const speakerBadge = a.kind === 'guest_share' && a.speaker
     ? `<span class="px-2 py-0.5 text-xs rounded font-medium bg-amber-100 text-amber-800">主讲：${escapeHtml(a.speaker)}</span>`
     : '';
+  const exportBtn = `<button id="assetExportBtn" class="px-3 py-1.5 text-sm border border-line rounded-lg flex items-center gap-1 text-slate-500 hover:text-accent hover:border-indigo-300 hover:bg-accentSoft">${icon('download')}<span>导出 PDF</span></button>`;
   const deleteBtn = `<button id="assetDeleteBtn" class="px-3 py-1.5 text-sm border border-line rounded-lg flex items-center gap-1 text-slate-500 hover:text-rose-600 hover:border-rose-300 hover:bg-rose-50">${icon('trash')}<span>删除</span></button>`;
   // Daily-digest assets aren't tied to a single group — use a different
   // breadcrumb path and a different left-nav highlight.
@@ -937,7 +938,7 @@ async function pageAsset(id) {
     ? `<span class="text-slate-500">· ${_stampLabel} ${escapeHtml(fmtAbsTime(_stampSec))} <span class="text-slate-400">(${escapeHtml(fmtRelTime(_stampSec))})</span></span>`
     : '';
   document.getElementById('app').innerHTML = shell(activeNav, `
-    ${topbar(crumbs, deleteBtn)}
+    ${topbar(crumbs, exportBtn + deleteBtn)}
     <div class="p-8 max-w-4xl">
       <div class="flex items-center gap-2 text-xs mb-3 flex-wrap">
         ${badge(a.kind)}
@@ -955,6 +956,24 @@ async function pageAsset(id) {
       toast('已删除', 'success');
       location.hash = '#group/' + a.group_id;
     } catch (e) { toast(e.message, 'error'); }
+  });
+  document.getElementById('assetExportBtn').addEventListener('click', async () => {
+    // The backend renders the PDF and writes it straight into ~/Downloads —
+    // no browser download and no save dialog, so it behaves identically in a
+    // browser and in the bundled .app's WKWebView.
+    const btn = document.getElementById('assetExportBtn');
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span>生成中…</span>';
+    try {
+      const res = await api(`/api/assets/${a.id}/export`, { method: 'POST' });
+      toast(`已保存到「下载」文件夹：${res.filename}`, 'success');
+    } catch (e) {
+      toast('导出失败：' + e.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = original;
+    }
   });
 }
 

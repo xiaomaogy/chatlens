@@ -33,8 +33,8 @@ PLIST = {
     "CFBundleName": "ChatLens",
     "CFBundleDisplayName": "ChatLens",
     "CFBundleIdentifier": "net.chatlens.app",
-    "CFBundleVersion": "0.1.13",
-    "CFBundleShortVersionString": "0.1.13",
+    "CFBundleVersion": "0.1.14",
+    "CFBundleShortVersionString": "0.1.14",
     "LSMinimumSystemVersion": "12.0",
     "NSHighResolutionCapable": True,
     "LSUIElement": False,
@@ -62,6 +62,9 @@ OPTIONS = {
         "wechat_cli",
         "Crypto",       # pycryptodome
         "zstandard",
+        # PDF export (chatlens.pdfexport) — fpdf2 is imported lazily, so list
+        # it explicitly for py2app's static scanner. Pure Python; no dylibs.
+        "fpdf",
     ],
     "includes": [
         "sqlalchemy.dialects.sqlite",
@@ -91,7 +94,7 @@ OPTIONS = {
 setup(
     app=APP,
     name="ChatLens",
-    version="0.1.13",
+    version="0.1.14",
     data_files=DATA_FILES,
     options={"py2app": OPTIONS},
 )

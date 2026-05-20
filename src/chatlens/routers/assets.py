@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlmodel import Session, select
 
-from .. import llm, wechat
+from .. import llm, pdfexport, wechat
 from ..config import settings
 from ..db import Asset, Group, _now, get_session, isoformat_utc
 
@@ -110,6 +110,24 @@ def get_asset(asset_id: str, db: Session = Depends(get_session)) -> dict:
         "updated_at": isoformat_utc(a.updated_at) if a.updated_at else None,
         "topics": topics_out,
     }
+
+
+@router.post("/assets/{asset_id}/export")
+def export_asset_pdf(asset_id: str, db: Session = Depends(get_session)) -> dict:
+    """Render an asset (精华 / 每日精华 / 嘉宾分享) to a PDF written straight
+    into ~/Downloads — note text plus its inline images, no dialog."""
+    a = db.get(Asset, asset_id)
+    if not a:
+        raise HTTPException(404, "asset not found")
+    g = db.get(Group, a.group_id)
+    try:
+        path = pdfexport.export_asset_to_downloads(a, g.name if g else "")
+    except pdfexport.PDFExportUnavailable as e:
+        raise HTTPException(503, str(e))
+    except Exception as e:  # noqa: BLE001 — surface render failures, don't 500 blind
+        log.exception("PDF export failed for asset %s", asset_id)
+        raise HTTPException(500, f"PDF 生成失败：{e}")
+    return {"ok": True, "filename": path.name, "path": str(path)}
 
 
 @router.delete("/assets/{asset_id}")

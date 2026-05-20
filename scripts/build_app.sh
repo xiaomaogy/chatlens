@@ -24,7 +24,11 @@ DMG_PATH="dist/${APP_NAME}.dmg"
 STAGE_DIR="build/dmg-stage"
 
 echo "==> Cleaning previous build"
-rm -rf build dist "${STAGE_DIR}"
+# Best-effort: macOS sometimes keeps the dist/ directory itself busy (Finder
+# window open, a mounted ChatLens.dmg, Spotlight). rm clears the contents but
+# may fail to remove the now-empty dir — that must not abort the build.
+rm -rf build dist "${STAGE_DIR}" 2>/dev/null || true
+rm -rf build/* dist/* 2>/dev/null || true
 
 echo "==> Running py2app (using ${PY})"
 "${PY}" setup.py py2app

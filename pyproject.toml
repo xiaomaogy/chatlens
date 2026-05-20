@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "chatlens"
-version = "0.1.13"
+version = "0.1.14"
 description = "Local-only WeChat group dashboard with one-click LLM summaries via Claude Code"
 requires-python = ">=3.11"
 dependencies = [
@@ -13,6 +13,9 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
     "sqlmodel>=0.0.22",
+    # PDF export (POST /api/assets/{id}/export) — fpdf2 is pure Python, so it
+    # bundles into the .app with zero system libraries to install.
+    "fpdf2>=2.8",
     # wechat-cli is bundled into the .app via py2app so users don't need to
     # `pipx install` it separately. Pin to the patched fork that exposes
     # is_folded / __main__.py for module invocation.

@@ -32,6 +32,7 @@ export function icon(name) {
     share:'M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7M16 6l-4-4-4 4M12 2v13',
     eyeOff:'M17.94 17.94A10.94 10.94 0 0112 20c-7 0-11-8-11-8a19.79 19.79 0 015.06-5.94M9.9 4.24A10.94 10.94 0 0112 4c7 0 11 8 11 8a19.86 19.86 0 01-3.17 4.19M1 1l22 22M14.12 14.12a3 3 0 11-4.24-4.24',
     eye:'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z M12 9a3 3 0 100 6 3 3 0 000-6z',
+    download:'M12 3v12M7 10l5 5 5-5M5 21h14',
   };
   return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${paths[name]||''}"/></svg>`;
 }
