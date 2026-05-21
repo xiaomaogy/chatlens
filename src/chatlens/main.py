@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -85,6 +86,35 @@ def serve_media(asset_id: str, filename: str) -> FileResponse:
     if not str(p).startswith(str(base) + "/") or not p.is_file():
         raise HTTPException(404, "media not found")
     return FileResponse(p)
+
+
+@app.post("/api/media/{asset_id}/{filename}/save")
+def save_media_to_downloads(asset_id: str, filename: str) -> dict:
+    """Copy a media image into ~/Downloads.
+
+    The reliable way to "download" an image from inside the pywebview native
+    window — a browser-style `<a download>` is a no-op there, the same way the
+    `window.open` the image lightbox replaced was. Mirrors the PDF-export flow.
+    """
+    if not asset_id.replace("-", "").isalnum():
+        raise HTTPException(400, "invalid asset id")
+    if "/" in filename or ".." in filename or filename.startswith("."):
+        raise HTTPException(400, "invalid filename")
+    p = (settings.data_dir / "media" / asset_id / filename).resolve()
+    base = (settings.data_dir / "media").resolve()
+    if not str(p).startswith(str(base) + "/") or not p.is_file():
+        raise HTTPException(404, "media not found")
+    downloads = Path.home() / "Downloads"
+    downloads.mkdir(parents=True, exist_ok=True)
+    dst = downloads / filename
+    if dst.exists():
+        stem, suffix = dst.stem, dst.suffix
+        n = 1
+        while dst.exists():
+            dst = downloads / f"{stem}-{n}{suffix}"
+            n += 1
+    shutil.copy2(p, dst)
+    return {"ok": True, "filename": dst.name, "path": str(dst)}
 
 
 def _static_dir() -> Path:

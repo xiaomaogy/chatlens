@@ -986,12 +986,51 @@ function renderMessageText(text, assetId) {
   const park = (html) => { stash.push(html); return SENT + (stash.length - 1) + SENT; };
   let s = escapeHtml(text);
   s = s.replace(/\[图片\s+([^\]]+)\]/g, (_, fname) =>
-    park(`<img src="/api/media/${assetId}/${encodeURIComponent(fname.trim())}" class="my-2 rounded-lg border border-line max-w-[260px] max-h-64 object-contain cursor-zoom-in" alt="" onclick="window.open(this.src,'_blank')">`));
+    park(`<img src="/api/media/${assetId}/${encodeURIComponent(fname.trim())}" class="my-2 rounded-lg border border-line max-w-[260px] max-h-64 object-contain cursor-zoom-in cl-zoomable" alt="">`));
   s = s.replace(/(^|[\s(])(https?:\/\/[^\s<>"'】)]+)/g, (_, pre, url) =>
     pre + park(`<a href="${url}" target="_blank" rel="noopener" class="text-accent hover:underline">${url}</a>`));
   s = s.replace(new RegExp(SENT + '(\\d+)' + SENT, 'g'), (_, i) => stash[+i]);
   return s;
 }
+
+/* ---------- image lightbox ---------- */
+// Images in 精华 / topic views are click-to-zoom. A browser `window.open` is
+// a no-op inside the pywebview native window, so we render an in-page overlay
+// instead. Download routes through the backend (copies into ~/Downloads)
+// because an <a download> is equally dead in the webview.
+function openLightbox(src) {
+  document.getElementById('clLightbox')?.remove();
+  const ov = document.createElement('div');
+  ov.id = 'clLightbox';
+  ov.className = 'fixed inset-0 z-[100] bg-black/85 flex items-center justify-center p-6';
+  const m = src.match(/^\/api\/media\/([^/]+)\/(.+)$/);
+  ov.innerHTML = `
+    <img src="${escapeHtml(src)}" class="max-w-[92vw] max-h-[86vh] object-contain rounded-lg shadow-2xl">
+    <div class="absolute top-4 right-4 flex gap-2">
+      ${m ? '<button id="clLbSave" class="px-3 py-1.5 bg-white/15 hover:bg-white/30 text-white text-sm rounded-lg backdrop-blur">下载到 Downloads</button>' : ''}
+      <button id="clLbClose" class="px-3 py-1.5 bg-white/15 hover:bg-white/30 text-white text-sm rounded-lg backdrop-blur">关闭 ✕</button>
+    </div>`;
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  const close = () => { document.removeEventListener('keydown', onKey); ov.remove(); };
+  // Backdrop click closes; clicking the image itself does not.
+  ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+  ov.querySelector('#clLbClose').addEventListener('click', close);
+  ov.querySelector('#clLbSave')?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    try {
+      const r = await api(`/api/media/${m[1]}/${m[2]}/save`, { method:'POST', body:'{}' });
+      toast(`已保存到 Downloads：${r.filename}`, 'success');
+    } catch (err) { toast(err.message, 'error'); }
+  });
+  document.addEventListener('keydown', onKey);
+  document.body.appendChild(ov);
+}
+
+// One delegated listener covers every zoomable image, current and future.
+document.addEventListener('click', (e) => {
+  const img = e.target.closest && e.target.closest('img.cl-zoomable');
+  if (img) openLightbox(img.getAttribute('src'));
+});
 
 async function pageTopic(arg) {
   const status = await loadStatus();

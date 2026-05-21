@@ -61,7 +61,7 @@ export function renderMd(md) {
     const placeholders = [];
     const stash = (html) => { placeholders.push(html); return SENT + (placeholders.length - 1) + SENT; };
     s = s.replace(/!\[([^\]]*)\]\(([^\s)]+)\)/g, (_, alt, url) =>
-      stash(`<img src="${escapeHtml(url)}" alt="${alt}" class="my-3 rounded-lg border border-line max-w-sm max-h-80 object-contain cursor-zoom-in" onclick="window.open(this.src,'_blank')">`));
+      stash(`<img src="${escapeHtml(url)}" alt="${alt}" class="my-3 rounded-lg border border-line max-w-sm max-h-80 object-contain cursor-zoom-in cl-zoomable">`));
     s = s.replace(/\[([^\]]+)\]\(([^\s)]+)\)/g, (_, text, url) => {
       // Hash-only URLs are in-app SPA navigation (e.g. #asset/xxx, #topic/aaa/T1)
       // and must NOT open in a new tab; otherwise the browser drops out of the

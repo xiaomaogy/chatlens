@@ -33,8 +33,8 @@ PLIST = {
     "CFBundleName": "ChatLens",
     "CFBundleDisplayName": "ChatLens",
     "CFBundleIdentifier": "net.chatlens.app",
-    "CFBundleVersion": "0.1.14",
-    "CFBundleShortVersionString": "0.1.14",
+    "CFBundleVersion": "0.1.17",
+    "CFBundleShortVersionString": "0.1.17",
     "LSMinimumSystemVersion": "12.0",
     "NSHighResolutionCapable": True,
     "LSUIElement": False,
@@ -94,7 +94,7 @@ OPTIONS = {
 setup(
     app=APP,
     name="ChatLens",
-    version="0.1.14",
+    version="0.1.17",
     data_files=DATA_FILES,
     options={"py2app": OPTIONS},
 )

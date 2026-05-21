@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import inspect, text
+from sqlalchemy import event, inspect, text
 from sqlmodel import Field, Session, SQLModel, create_engine
 
 from .config import settings
@@ -86,6 +86,25 @@ def _engine_args() -> dict:
 
 
 engine = create_engine(settings.database_url, **_engine_args())
+
+
+if settings.database_url.startswith("sqlite"):
+    @event.listens_for(engine, "connect")
+    def _sqlite_pragmas(dbapi_conn, _record) -> None:  # noqa: ARG001
+        """Tune every new SQLite connection.
+
+        - journal_mode=WAL: readers no longer block on a writer. Without it, a
+          background summarize job's COMMIT takes an exclusive lock and any
+          page-load query stalls (up to busy_timeout) until the write finishes.
+        - busy_timeout: wait briefly for a lock instead of erroring instantly.
+        - synchronous=NORMAL: safe under WAL, and trims fsync stalls that would
+          otherwise freeze the event loop during a commit.
+        """
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA busy_timeout=5000")
+        cur.execute("PRAGMA synchronous=NORMAL")
+        cur.close()
 
 
 # Each entry: (table, column, sqlite-friendly DDL fragment to add the column)

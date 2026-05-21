@@ -2,6 +2,7 @@
 generates both a daily summary AND any topical-share writeups it detects."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -409,6 +410,110 @@ def _merge_topic_metas(old_topics: list[dict], new_topics: list) -> list[dict]:
     return out
 
 
+def _persist_full_summary(
+    db: Session, g: Group, date_str: str, result, msg_count: int, _phase,
+) -> dict:
+    """Synchronous tail of the full summarize path — runs via asyncio.to_thread
+    so its SQLite writes and media-file copies don't freeze the event loop (and
+    with it every page request) while a job is in flight.
+
+    Any prior daily_summary + guest_share rows for this (group, date) are stale
+    once the LLM call succeeds; delete + insert in one session so the commit is
+    atomic — a failed Claude call earlier leaves the old summary intact.
+    """
+    prev = list(db.exec(
+        select(Asset).where(
+            Asset.group_id == g.id,
+            Asset.for_date == date_str,
+            Asset.kind.in_(("daily_summary", "guest_share")),
+        )
+    ).all())
+    for old in prev:
+        media_dir = settings.data_dir / "media" / old.id
+        if media_dir.exists():
+            shutil.rmtree(media_dir, ignore_errors=True)
+        db.delete(old)
+
+    messages_index = {str(k): v for k, v in result.line_to_message.items()}
+    summary_meta = {
+        "topics": [{"id": t.id, "title": t.title, "lines": t.lines} for t in result.topics],
+        "messages": messages_index,
+    }
+    summary_asset = Asset(
+        group_id=g.id,
+        kind="daily_summary",
+        title=_first_heading(result.summary_md) or f"{g.name} · {date_str}",
+        description=" ".join(result.summary_md.split())[:240],
+        body_md=result.summary_md,
+        meta_json=json.dumps(summary_meta, ensure_ascii=False),
+        for_date=date_str,
+    )
+    _phase("保存每日精华…")
+    db.add(summary_asset)
+    db.commit()
+    db.refresh(summary_asset)
+    _persist_all_images(summary_asset.id, result.image_paths_by_name)
+
+    share_ids: list[str] = []
+    for i, share in enumerate(result.shares, start=1):
+        _phase(f"保存嘉宾分享 {i}/{len(result.shares)}…")
+        share_ids.append(_persist_share(
+            db, g.id, date_str, share, messages_index, result.image_paths_by_name,
+        ))
+
+    return {
+        "summary_id": summary_asset.id,
+        "title": summary_asset.title,
+        "for_date": date_str,
+        "message_count": msg_count,
+        "share_ids": share_ids,
+        "share_count": len(share_ids),
+    }
+
+
+def _persist_incremental_summary(
+    db: Session, g: Group, date_str: str, existing_summary: Asset, result,
+    old_topics: list[dict], old_messages: dict, new_msg_count: int, _phase,
+) -> dict:
+    """Synchronous tail of the incremental summarize path — runs via
+    asyncio.to_thread for the same event-loop reason as _persist_full_summary.
+    """
+    new_messages_index = {str(k): v for k, v in result.line_to_message.items()}
+    merged_meta = {
+        "topics": _merge_topic_metas(old_topics, result.topics),
+        "messages": {**old_messages, **new_messages_index},
+    }
+    existing_summary.title = _first_heading(result.summary_md) or existing_summary.title
+    existing_summary.description = " ".join(result.summary_md.split())[:240]
+    existing_summary.body_md = result.summary_md
+    existing_summary.meta_json = json.dumps(merged_meta, ensure_ascii=False)
+    # Stamp so the UI can switch from "生成于" to "更新于" for in-place updates.
+    # created_at stays at the original first-generation time.
+    existing_summary.updated_at = _now()
+    _phase("保存每日精华…")
+    db.add(existing_summary)
+    db.commit()
+    db.refresh(existing_summary)
+    _persist_all_images(existing_summary.id, result.image_paths_by_name)
+
+    share_ids: list[str] = []
+    for i, share in enumerate(result.shares, start=1):
+        _phase(f"保存嘉宾分享 {i}/{len(result.shares)}…")
+        share_ids.append(_persist_share(
+            db, g.id, date_str, share, new_messages_index, result.image_paths_by_name,
+        ))
+
+    return {
+        "summary_id": existing_summary.id,
+        "title": existing_summary.title,
+        "for_date": date_str,
+        "message_count": new_msg_count,
+        "share_ids": share_ids,
+        "share_count": len(share_ids),
+        "incremental": True,
+    }
+
+
 async def summarize_group(
     group_id: str,
     db: Session,
@@ -518,57 +623,12 @@ async def summarize_group(
     _phase(f"Claude 正在生成精华({len(msgs)} 条消息)…")
     result = await llm.summarize_chat(g.name, date_str, msgs)
 
-    # LLM call succeeded → any prior daily_summary + guest_share rows for
-    # this (group, date) are stale. Delete + insert share this session so
-    # commit is atomic; a failed Claude call leaves the old summary intact.
-    prev = list(db.exec(
-        select(Asset).where(
-            Asset.group_id == g.id,
-            Asset.for_date == date_str,
-            Asset.kind.in_(("daily_summary", "guest_share")),
-        )
-    ).all())
-    for old in prev:
-        media_dir = settings.data_dir / "media" / old.id
-        if media_dir.exists():
-            shutil.rmtree(media_dir, ignore_errors=True)
-        db.delete(old)
-
-    messages_index = {str(k): v for k, v in result.line_to_message.items()}
-    summary_meta = {
-        "topics": [{"id": t.id, "title": t.title, "lines": t.lines} for t in result.topics],
-        "messages": messages_index,
-    }
-    summary_asset = Asset(
-        group_id=g.id,
-        kind="daily_summary",
-        title=_first_heading(result.summary_md) or f"{g.name} · {date_str}",
-        description=" ".join(result.summary_md.split())[:240],
-        body_md=result.summary_md,
-        meta_json=json.dumps(summary_meta, ensure_ascii=False),
-        for_date=date_str,
+    # The persist step is synchronous (SQLite writes + media-file copies). Run
+    # it on a worker thread so it doesn't freeze the server's event loop — and
+    # with it every page request — for the duration of the writes.
+    return await asyncio.to_thread(
+        _persist_full_summary, db, g, date_str, result, len(msgs), _phase,
     )
-    _phase("保存每日精华…")
-    db.add(summary_asset)
-    db.commit()
-    db.refresh(summary_asset)
-    _persist_all_images(summary_asset.id, result.image_paths_by_name)
-
-    share_ids: list[str] = []
-    for i, share in enumerate(result.shares, start=1):
-        _phase(f"保存嘉宾分享 {i}/{len(result.shares)}…")
-        share_ids.append(_persist_share(
-            db, g.id, date_str, share, messages_index, result.image_paths_by_name,
-        ))
-
-    return {
-        "summary_id": summary_asset.id,
-        "title": summary_asset.title,
-        "for_date": date_str,
-        "message_count": len(msgs),
-        "share_ids": share_ids,
-        "share_count": len(share_ids),
-    }
 
 
 async def _summarize_group_incremental(
@@ -635,40 +695,12 @@ async def _summarize_group_incremental(
         next_line=max_line + 1,
     )
 
-    new_messages_index = {str(k): v for k, v in result.line_to_message.items()}
-    merged_meta = {
-        "topics": _merge_topic_metas(old_topics, result.topics),
-        "messages": {**old_messages, **new_messages_index},
-    }
-    existing_summary.title = _first_heading(result.summary_md) or existing_summary.title
-    existing_summary.description = " ".join(result.summary_md.split())[:240]
-    existing_summary.body_md = result.summary_md
-    existing_summary.meta_json = json.dumps(merged_meta, ensure_ascii=False)
-    # Stamp so the UI can switch from "生成于" to "更新于" for in-place updates.
-    # created_at stays at the original first-generation time.
-    existing_summary.updated_at = _now()
-    _phase("保存每日精华…")
-    db.add(existing_summary)
-    db.commit()
-    db.refresh(existing_summary)
-    _persist_all_images(existing_summary.id, result.image_paths_by_name)
-
-    share_ids: list[str] = []
-    for i, share in enumerate(result.shares, start=1):
-        _phase(f"保存嘉宾分享 {i}/{len(result.shares)}…")
-        share_ids.append(_persist_share(
-            db, g.id, date_str, share, new_messages_index, result.image_paths_by_name,
-        ))
-
-    return {
-        "summary_id": existing_summary.id,
-        "title": existing_summary.title,
-        "for_date": date_str,
-        "message_count": len(new_msgs),
-        "share_ids": share_ids,
-        "share_count": len(share_ids),
-        "incremental": True,
-    }
+    # Persist on a worker thread — see _persist_full_summary for the why.
+    return await asyncio.to_thread(
+        _persist_incremental_summary,
+        db, g, date_str, existing_summary, result, old_topics, old_messages,
+        len(new_msgs), _phase,
+    )
 
 
 # The POST /groups/{id}/summarize endpoint lives in routers/jobs.py — it
